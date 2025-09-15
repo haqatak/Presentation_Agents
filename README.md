@@ -124,10 +124,18 @@ docker-compose up --build -d
 # Or manually
 docker-compose down
 ```
+If you use Podman and docker-compatibility is correctly setup as per instructions [here](https://podman-desktop.io/docs/migrating-from-docker/managing-docker-compatibility), then you can use:
+```bash
+podman compose up --build -d
+```
+In the end, you should have three containers running:
+- tech-tracker-app (the main app on port 8000)
+- tech-tracker-brave-search (Brave Search MCP server on port 3001)
+- tech-tracker-hackernews (Hacker News MCP server on port 3003)
 
 ## 🐍 Development Setup (Alternative)
 
-If you prefer to run without Docker:
+If you prefer to run without containers:
 
 ```bash
 # Create and activate virtual environment
