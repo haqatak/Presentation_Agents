@@ -92,9 +92,76 @@ class HistoryItem(BaseModel):
 
 
 class HistoryListResponse(BaseModel):
-    items: list[HistoryItem]
+    """Response for listing history entries."""
+
+    items: list[HistoryItem] = Field(description="List of recent history items")
 
 
 class HistoryEntryResponse(BaseModel):
-    item: HistoryItem
-    data: dict[str, Any]
+    """Response for a single history entry with full data."""
+
+    item: HistoryItem = Field(description="Core metadata of the history item")
+    data: dict[str, Any] = Field(description="Full data payload of the history entry")
+
+
+class RootResponse(BaseModel):
+    """Response for the root endpoint."""
+
+    name: str
+    description: str
+    version: str
+    environment: str
+    docs_url: str
+    health_url: str
+    ui_url: str | None
+    timestamp: datetime
+
+
+class A2ASendResponse(BaseModel):
+    """Response for the A2A send endpoint."""
+
+    status: str
+    result: dict[str, Any]
+    correlation_id: str | None
+
+
+class AgentStatus(BaseModel):
+    """Status of a single agent."""
+
+    status: str
+    details: str
+    timestamp: str
+
+
+class AgentStatusResponse(BaseModel):
+    """Response for the agent status endpoint."""
+
+    agents: dict[str, AgentStatus]
+    a2a_service: dict[str, Any]
+    timestamp: datetime
+
+
+class MCPStatusResponse(BaseModel):
+    """Response for the MCP status endpoint."""
+
+    mcp_servers: dict[str, bool]
+    timestamp: datetime
+
+
+class FileData(BaseModel):
+    """Data for a single file."""
+
+    name: str
+    path: str
+    full_path: str
+    description: str
+    size: int
+
+
+class FileListResponse(BaseModel):
+    """Response for the file list endpoint."""
+
+    files: list[FileData]
+    source: str
+    timestamp: datetime
+    error: str | None = None
