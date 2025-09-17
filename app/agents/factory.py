@@ -18,13 +18,33 @@ class AgentFactory:
 
     def __init__(self, mcp_manager: MCPClientManager):
         self.mcp_manager = mcp_manager
-        if not os.getenv("OPENAI_API_KEY") and settings.openai_api_key:
-            os.environ["OPENAI_API_KEY"] = settings.openai_api_key
+        # Prioritize the new LLM_API_KEY, fall back to OPENAI_API_KEY
+        api_key = settings.llm_api_key or settings.openai_api_key
+        if api_key:
+            os.environ["OPENAI_API_KEY"] = api_key
 
     def create_agent(self, system_prompt: str) -> Agent:
         """Creates a new Pydantic-AI Agent with all tools registered."""
+        logger.info(
+            f"Creating agent with LLM provider: {settings.llm_provider}",
+            model=settings.llm_model_name,
+            base_url=settings.llm_api_base_url,
+        )
+
+        llm_engine_kwargs = {}
+        if settings.llm_api_base_url:
+            llm_engine_kwargs["base_url"] = settings.llm_api_base_url
+
+        # For OpenAI-compatible APIs, we can still use the OpenAI model class
+        # but point it to a different base URL.
+        llm = OpenAIModel(
+            api_key=settings.llm_api_key or settings.openai_api_key,
+            engine_kwargs=llm_engine_kwargs,
+            model=settings.llm_model_name,
+        )
+
         agent = Agent(
-            model=OpenAIModel("gpt-4o"),
+            model=llm,
             system_prompt=system_prompt,
         )
         self._register_tools(agent)
