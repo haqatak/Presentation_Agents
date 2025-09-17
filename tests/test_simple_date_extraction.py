@@ -31,6 +31,7 @@ def extract_date_from_url(url: str) -> datetime | None:
     return None
 
 
+@pytest.mark.asyncio
 async def test_simple_extraction():
     """Test simple date extraction."""
     test_urls = [

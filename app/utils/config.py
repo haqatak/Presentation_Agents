@@ -7,8 +7,28 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings."""
 
-    # OpenAI Configuration
-    openai_api_key: str = Field(..., env="OPENAI_API_KEY")
+    # LLM Configuration
+    llm_provider: str = Field(
+        default="openai",
+        env="LLM_PROVIDER",
+        description="LLM provider to use (e.g., 'openai', 'ollama', 'lmstudio', 'vllm')",
+    )
+    llm_model_name: str = Field(
+        default="gpt-4o",
+        env="LLM_MODEL_NAME",
+        description="Name of the language model to use",
+    )
+    llm_api_base_url: str | None = Field(
+        default=None,
+        env="LLM_API_BASE_URL",
+        description="API base URL for the LLM provider (for local models)",
+    )
+    llm_api_key: str | None = Field(
+        default=None,
+        env="LLM_API_KEY",
+        description="API key for the LLM provider",
+    )
+    openai_api_key: str | None = Field(default=None, env="OPENAI_API_KEY") # Keep for backward compatibility
 
     # MCP Server URLs
     brave_search_mcp_url: str = Field(

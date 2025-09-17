@@ -1,206 +1,144 @@
 """Entry Agent (Tech Radar) - Analyzes tech trends using Brave Search and Hacker News."""
 
 import os
-import re
 from datetime import datetime, timedelta
 from typing import Any
 
+from pydantic_ai import Agent
+
+from ..models.requests import GeneralChatRequest, TechTrendsRequest
+from ..models.responses import GeneralChatResponse, TechTrendsResponse
 from ..services.memory_service import MemoryService, build_default_memory_service
 from ..utils import get_logger
 from ..utils.config import settings
 from ..utils.date_extractor import filter_and_extract_dates
-from .base_agent import BaseAgent
 
 logger = get_logger(__name__)
 
-# Environment variable configuration
-BRAVE_WEB_SEARCH_LIMIT = int(os.getenv("BRAVE_WEB_SEARCH_LIMIT", "20"))
 
+class EntryAgent:
+    """
+    Service class for the Entry Agent, specializing in tech trend analysis.
+    This class *uses* a Pydantic-AI Agent; it does not wrap it.
+    """
 
-class EntryAgent(BaseAgent):
-    """Entry Agent specializing in tech trend analysis."""
-
-    def __init__(self) -> None:
-        """Initialize the Entry Agent."""
-        system_prompt = """
-        You are an intelligent AI assistant with dual capabilities:
-        
-        1. TECH RADAR MODE (when queries are about technology, programming, development, GitHub, or trends):
-        - Search for latest tech trends using Brave Search
-        - Fetch trending stories from Hacker News
-        - Analyze and correlate findings across sources
-        - Identify emerging technologies and frameworks
-        - Detect GitHub repositories mentioned in trends
-        - Communicate with the Specialist Agent for repository analysis
-        
-        When analyzing tech trends:
-        - Focus on developer tools, frameworks, programming languages
-        - Look for patterns across different sources
-        - Identify sentiment and community interest
-        - Extract repository names when mentioned
-        - Provide clear, actionable insights
-        
-        2. GENERAL AI MODE (when queries are general questions not related to tech trends):
-        - Answer general knowledge questions directly (e.g., "Where is Athens?", "How does photosynthesis work?")
-        - Provide helpful information without using MCP tools
-        - Be conversational and informative
-        - Don't try to search for trends when the question is clearly not tech-related
-        
-        IMPORTANT: Only use MCP tools (Brave Search, Hacker News, GitHub) when the query is specifically about:
-        - Technology trends, frameworks, libraries, tools, AI
-        - Programming languages and development
-        - GitHub repositories or software projects
-        - Developer community discussions
-        - Everything related to software, coding, and technology
-        
-        For general questions like geography, science, history, cooking, etc., provide direct answers without using MCP tools.
-        """
-
-        super().__init__("entry_agent", system_prompt)
-        # Memory for augmenting queries
+    def __init__(self, agent: Agent, mcp_manager):
+        self.agent = agent
+        self.mcp_manager = mcp_manager
+        self.agent_name = "entry_agent"
         try:
             self.memory: MemoryService = build_default_memory_service()
         except Exception:
-            self.memory = None  # type: ignore
+            self.memory = None
 
-    async def process_request(self, request_data: dict[str, Any]) -> dict[str, Any]:
-        """Process a tech trends analysis request.
-
-        Args:
-            request_data: Request containing query and preferences
-
-        Returns:
-            Tech trends analysis results
-
-        """
-        query = request_data.get("query", "")
-        include_hn = request_data.get("include_hn", True)
-        include_brave = request_data.get("include_brave", True)
-        limit = request_data.get("limit", 10)
-
-        # Process @file syntax to include file contents
-        query = await self._process_file_references(query)
-
+    async def process_request(self, request: TechTrendsRequest) -> TechTrendsResponse:
+        """Process a tech trends analysis request."""
+        query = await self._process_file_references(request.query)
         logger.info(
             "Processing tech trends request",
             query=query,
-            include_hn=include_hn,
-            include_brave=include_brave,
-            limit=limit,
+            include_hn=request.include_hn,
+            include_brave=request.include_brave,
+            limit=request.limit,
         )
 
         trends = []
         sources_used = []
 
         try:
-            # Collect results from both sources
             brave_results = []
             hn_results = []
 
-            # Search Brave if enabled
-            if include_brave:
-                brave_results = await self._search_brave_trends(query, limit)
+            if request.include_brave:
+                brave_results = await self._search_brave_trends(query, request.limit)
                 sources_used.append("brave_search")
 
-            # Fetch Hacker News if enabled
-            if include_hn:
-                hn_results = await self._fetch_hacker_news_trends(query, limit)
+            if request.include_hn:
+                hn_results = await self._fetch_hacker_news_trends(query, request.limit)
                 sources_used.append("hacker_news")
 
-            # Sort and combine results with proper ordering
             trends = self._combine_and_sort_trends(hn_results, brave_results)
 
-            # Analyze trends using AI
             analysis_prompt = f"""
             Analyze the following tech trends for query: "{query}" 
-            
-            Trends data: {trends[:20]}  # Limit for token efficiency
-            
-            Provide:
-            1. Summary of key trends
-            2. Emerging technologies identified
-            3. GitHub repositories mentioned (extract owner/repo format)
-            4. Correlation between different sources
-            5. Recommendations for further analysis
-            
-            Focus on actionable insights for developers and technology adoption.
+            Trends data: {trends[:20]}
+            Provide a summary of key trends, emerging technologies, and any mentioned GitHub repositories.
             """
-
             analysis_result = await self.agent.run(analysis_prompt)
+            summary = self._extract_content(str(analysis_result))
 
-            # Extract GitHub repositories for specialist agent
-            repo_extraction_prompt = f"""
-            From this analysis, extract GitHub repository names in owner/repo format: 
-            
-            {analysis_result!s}
-            
-            Return only a comma-separated list of repository names, e.g.:
-            microsoft/vscode, facebook/react, vercel/next.js
-            
-            If no repositories found, return "none".
-            """
+            if self.memory:
+                self.memory.add_interaction(query, summary, kind="trends")
 
-            repo_result = await self.agent.run(repo_extraction_prompt)
-            detected_repos = []
-
-            repo_result_str = self._extract_content(str(repo_result))
-            if repo_result_str and repo_result_str.lower() != "none":
-                detected_repos = [
-                    repo.strip()
-                    for repo in repo_result_str.split(",")
-                    if "/" in repo.strip()
-                ]
-
-            # Also add trends result to memory for future QA
-            try:
-                if getattr(self, "memory", None):
-                    summary_text = (
-                        self._extract_content(str(analysis_result))
-                        if "analysis_result" in locals()
-                        else ""
-                    )
-                    trends_text = "\n".join([f"- {t.get('title','')}" for t in trends])
-                    combo = f"Query: {query}\nSummary: {summary_text}\nTrends:\n{trends_text}"
-                    self.memory.add_interaction(query, combo, kind="trends")
-            except Exception:
-                pass
-            return {
-                "query": query,
-                "trends": trends,
-                "total_items": len(trends),
-                "sources": sources_used,
-                "analysis_timestamp": datetime.utcnow().isoformat(),
-                "summary": self._extract_content(str(analysis_result)),
-                "detected_repositories": detected_repos,
-                "analysis_confidence": self._calculate_confidence(trends, sources_used),
-            }
-
+            return TechTrendsResponse(
+                query=request.query,
+                trends=trends,
+                total_items=len(trends),
+                sources=sources_used,
+                analysis_timestamp=datetime.utcnow(),
+                summary=summary,
+            )
         except Exception as e:
             logger.error(f"Error processing tech trends request: {e}")
-            return {
-                "error": str(e),
-                "query": query,
-                "trends": trends,
-                "sources": sources_used,
-                "analysis_timestamp": datetime.utcnow().isoformat(),
-            }
+            return TechTrendsResponse(
+                query=request.query,
+                trends=[],
+                total_items=0,
+                sources=sources_used,
+                analysis_timestamp=datetime.utcnow(),
+                summary=f"An error occurred: {e}",
+            )
+
+    async def process_general_chat(
+        self, request: GeneralChatRequest
+    ) -> GeneralChatResponse:
+        """Process a general chat message."""
+        message = await self._process_file_references(request.message)
+        logger.info(f"Processing general chat message: {message[:100]}...")
+
+        try:
+            classification = await self.classify_query(message)
+            is_tech_query = classification == "TECH"
+
+            if is_tech_query:
+                response_text = "This seems like a technology-related question. I recommend using the 'Analyze Trends' feature for a more detailed analysis."
+                message_type = "tech_suggestion"
+            else:
+                prompt = f"Answer this question: {message}"
+                context_block = ""
+                if self.memory:
+                    memories = self.memory.search_memories(message, k=3)
+                    if memories:
+                        joined = "\n\n".join([m.get("text", "") for m in memories])
+                        context_block = f"\n\nRelevant past interactions:\n{joined}\n\n"
+
+                result = await self.agent.run(prompt + context_block)
+                response_text = self._extract_content(str(result))
+                message_type = "general"
+
+            if self.memory:
+                self.memory.add_interaction(message, response_text, kind="chat")
+
+            return GeneralChatResponse(
+                response=response_text,
+                timestamp=datetime.utcnow(),
+                message_type=message_type,
+            )
+        except Exception as e:
+            logger.error(f"Error processing general chat: {e}")
+            return GeneralChatResponse(
+                response="I'm sorry, I encountered an error. Please try again.",
+                timestamp=datetime.utcnow(),
+                message_type="error",
+            )
 
     async def classify_query(self, message: str) -> str:
-        """Classify a message as TECH or GENERAL.
-
-        Args:
-            message: User input
-
-        Returns:
-            "TECH" or "GENERAL"
-
-        """
-        # Process @file syntax first to provide richer context to classifier
+        """Classify a message as TECH or GENERAL."""
         enriched = await self._process_file_references(message)
         classification_prompt = f"""
             Classify the following message as exactly one of: TECH or GENERAL.
-            - TECH: programming, frameworks, developer tools, GitHub, software, technology trends, AI models (e.g., Claude, GPT), HN topics.
-            - GENERAL: geography, history, cooking, casual chit-chat, everyday facts.
+            - TECH: programming, frameworks, developer tools, GitHub, software, technology trends, AI models.
+            - GENERAL: geography, history, cooking, casual chit-chat.
 
             Message: "{enriched}"
 
@@ -214,6 +152,19 @@ class EntryAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Classification failed, defaulting to GENERAL: {e}")
             return "GENERAL"
+
+    async def health_check(self) -> dict[str, str]:
+        """Perform health check for the agent."""
+        status = "healthy"
+        details = f"Agent {self.agent_name} is operational"
+        if not self.mcp_manager:
+            status = "degraded"
+            details = "MCP manager not initialized"
+        return {
+            "status": status,
+            "details": details,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
 
     async def _search_brave_trends(
         self,
@@ -834,80 +785,6 @@ class EntryAgent(BaseAgent):
         )
 
         return message.dict()
-
-    async def process_general_chat(self, message: str) -> dict[str, Any]:
-        """Process a general chat message (non-tech specific).
-
-        Args:
-            message: User's general question or message
-
-        Returns:
-            AI response to the general question
-
-        """
-        logger.info(f"Processing general chat message: {message[:100]}...")
-
-        # Process @file syntax to include file contents
-        message = await self._process_file_references(message)
-
-        try:
-            # Classify intent using shared classifier
-            classification = await self.classify_query(message)
-            is_tech_query = classification == "TECH"
-
-            if is_tech_query:
-                # This is actually a tech query, suggest using the trends search instead
-                response = f"""This seems like a technology-related question! For the best results, I recommend using the "Analyze Trends" feature above, which will search through Hacker News, GitHub, and the web for up-to-date information about: {message}
-                
-However, I can still provide a general answer: Let me give you some basic information about your question."""
-
-                # Still provide a basic answer
-                general_prompt = f"""
-                Provide a helpful, informative answer to this question: {message}
-                
-                Keep it concise but informative. If it's about technology, mention that more detailed and current information could be found through tech trend analysis.
-                """
-
-                general_result = await self.agent.run(general_prompt)
-                response += f"\n\n{self._extract_content(str(general_result))}"
-
-            else:
-                # This is a general question, answer directly
-                general_prompt = f"""
-                You are a helpful AI assistant. Answer this question clearly and informatively: {message}
-                
-                Provide accurate, helpful information. Be conversational and friendly.
-                """
-
-                # Retrieve relevant memories and augment prompt
-                context_block = ""
-                if getattr(self, "memory", None):
-                    memories = self.memory.search_memories(message, k=5)
-                    if memories:
-                        joined = "\n\n".join([m.get("text", "") for m in memories])
-                        context_block = f"\n\nRelevant past interactions (for continuity):\n{joined}\n\n"
-                result = await self.agent.run(general_prompt + context_block)
-                response = self._extract_content(str(result))
-
-            # Store to memory (best-effort)
-            try:
-                if getattr(self, "memory", None):
-                    self.memory.add_interaction(message, response, kind="chat")
-            except Exception:
-                pass
-            return {
-                "response": response,
-                "timestamp": datetime.utcnow().isoformat(),
-                "message_type": "tech_suggestion" if is_tech_query else "general",
-            }
-
-        except Exception as e:
-            logger.error(f"Error processing general chat: {e}")
-            return {
-                "response": "I'm sorry, I encountered an error while processing your question. Please try again.",
-                "timestamp": datetime.utcnow().isoformat(),
-                "message_type": "error",
-            }
 
     def _extract_content(self, agent_result_str: str) -> str:
         """Extract clean content from agent result string.

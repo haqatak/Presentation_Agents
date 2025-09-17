@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "app"))
 from app.utils.date_extractor import filter_and_extract_dates
 
 
+@pytest.mark.asyncio
 async def test_date_extraction():
     """Test date extraction with sample data."""
     # Sample search results
