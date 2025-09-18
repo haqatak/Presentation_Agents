@@ -114,8 +114,31 @@ LLM_API_BASE_URL=http://localhost:11434/v1
 LLM_API_KEY=
 ```
 
-### 4. Start the App
 
+### 3. Configuring the LLM Provider
+
+This application supports multiple LLM backends. You can configure the provider and model using the following environment variables in your `.env` file:
+
+- `LLM_PROVIDER`: The provider to use. Supported values are:
+    - `openai` (default)
+    - `ollama`
+    - `lmstudio`
+    - `vllm`
+- `LLM_MODEL_NAME`: The name of the model to use (e.g., `gpt-4o`, `llama3`, `mistral`).
+- `LLM_API_BASE_URL`: The base URL of the LLM provider's API. This is required for local models.
+    - For **Ollama**: `http://localhost:11434/v1`
+    - For **LMStudio**: `http://localhost:1234/v1`
+    - For **vLLM**: The URL of your vLLM server's OpenAI-compatible endpoint.
+- `LLM_API_KEY`: The API key for the provider. For local models that do not require an API key, this can be left empty.
+
+**Example for Ollama:**
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL_NAME=llama3
+LLM_API_BASE_URL=http://localhost:11434/v1
+LLM_API_KEY=
+```
+### 4. Start the App
 ```bash
 # Start with Docker (recommended)
 ./docker-start.sh
