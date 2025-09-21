@@ -4,6 +4,7 @@
 import asyncio
 import re
 from datetime import datetime, timedelta
+import pytest
 
 
 def extract_date_from_url(url: str) -> datetime | None:
